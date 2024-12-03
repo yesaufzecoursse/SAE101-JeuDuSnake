@@ -1,1 +1,360 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <time.h>
 
+// Définition des constantes de configuration
+#define TAILLE 10 // Taille du serpent
+#define TEMPORALISATION 100000 // Temps de pause entre chaque mouvement (en microsecondes)
+#define MIN 1
+#define MAX 40
+#define ARRET 'a' // Touche pour arrêter le jeu
+#define TETE 'O' // Caractère représentant la tête du serpent
+#define ANNEAUX 'X' // Caractère représentant les anneaux du serpent
+#define INITIALISATIONX 40 // Position initiale en X de la tête du serpent
+#define INITIALISATIONY 20 // Position initiale en Y de la tête du serpent
+#define GAUCHE 'q' // Touche pour aller à gauche
+#define DROITE 'd' // Touche pour aller à droite
+#define HAUT 'z' // Touche pour aller en haut
+#define BAS 's' // Touche pour aller en bas
+#define D_SERPENT 'd' // Direction initiale du serpent
+#define T_TABX 80 // Taille de la grille en X
+#define T_TABY 40 // Taille de la grille en Y
+#define PAVE_X 5 // Taille du pavé en X
+#define PAVE_Y 5 // Taille du pavé en Y
+#define NB_PAVE 4 // Nombre de pavés
+
+// Définition du tableau pour la grille
+typedef char (tab[T_TABX][40]);
+
+void disableEcho() {
+    struct termios tty;
+
+    // Obtenir les attributs du terminal
+    if (tcgetattr(STDIN_FILENO, &tty) == -1) {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+
+    // Desactiver le flag ECHO
+    tty.c_lflag &= ~ECHO;
+
+    // Appliquer les nouvelles configurations
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &tty) == -1) {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void enableEcho() {
+    struct termios tty;
+
+    // Obtenir les attributs du terminal
+    if (tcgetattr(STDIN_FILENO, &tty) == -1) {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+
+    // Reactiver le flag ECHO
+    tty.c_lflag |= ECHO;
+
+    // Appliquer les nouvelles configurations
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &tty) == -1) {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
+}
+
+// Fonction pour déplacer le curseur à la position (x, y) dans le terminal
+void gotoXY(int x, int y) { 
+    printf("\033[%d;%df", y, x);
+}
+
+// Fonction pour afficher un caractère 'c' à la position (x, y)
+void afficher(int x, int y, char c) {
+    gotoXY(x, y);
+    printf("%c", c);
+}
+
+// Fonction pour effacer le caractère à la position (x, y)
+void effacer(int x, int y) {
+    gotoXY(x, y);
+    printf(" ");
+    gotoXY(0,0);
+}
+
+// Fonction pour dessiner le serpent à partir des tableaux de positions lesX et lesY
+void dessinerSerpent(int lesX[TAILLE], int lesY[TAILLE]) {
+    for (int mult = 1; mult < TAILLE; mult = mult + 1) {
+        afficher(lesX[mult], lesY[mult], ANNEAUX);
+    }
+    afficher(lesX[0], lesY[0], TETE); // La tête du serpent
+}
+
+// Fonction pour faire progresser le serpent
+void progresser(int lesX[], int lesY[], char direction, bool *collision) {
+    int progressiveX, progressiveY, progX, progY;
+    effacer(lesX[TAILLE-1], lesY[TAILLE-1]);
+    // Modifier la position de la tête selon la direction
+    if (direction==DROITE){
+        progX=lesX[0];
+        progY=lesY[0];
+        lesX[0]=lesX[0]+1;
+        for (int mult = 1; mult < TAILLE; mult = mult + 1) {
+            progressiveX=lesX[mult];
+            progressiveY=lesY[mult];
+            lesX[mult]=progX;
+            lesY[mult]=progY;
+            progX=progressiveX;
+            progY=progressiveY;
+        }
+    }
+    if (direction==GAUCHE){
+        progX=lesX[0];
+        progY=lesY[0];
+        lesX[0]=lesX[0]-1;
+        for (int mult = 1; mult < TAILLE; mult = mult + 1) {
+            progressiveX=lesX[mult];
+            progressiveY=lesY[mult];
+            lesX[mult]=progX;
+            lesY[mult]=progY;
+            progX=progressiveX;
+            progY=progressiveY;
+        }
+    }
+    if (direction==HAUT){
+        progX=lesX[0];
+        progY=lesY[0];
+        lesY[0]=lesY[0]-1;
+        for (int mult = 1; mult < TAILLE; mult = mult + 1) {
+            progressiveX=lesX[mult];
+            progressiveY=lesY[mult];
+            lesX[mult]=progX;
+            lesY[mult]=progY;
+            progX=progressiveX;
+            progY=progressiveY;
+        }
+    }
+    if (direction==BAS){
+        progX=lesX[0];
+        progY=lesY[0];
+        lesY[0]=lesY[0]+1;
+        for (int mult = 1; mult < TAILLE; mult = mult + 1) {
+            progressiveX=lesX[mult];
+            progressiveY=lesY[mult];
+            lesX[mult]=progX;
+            lesY[mult]=progY;
+            progX=progressiveX;
+            progY=progressiveY;
+        }
+    }
+
+    for (int mult=1; mult<=TAILLE; mult ++){
+        if (lesX[0]==lesX[mult] && lesY[0]==lesY[mult]){
+            *collision=true;
+        }
+    }
+}
+
+// Fonction pour vérifier si une touche a été pressée
+int kbhit() {
+    // La fonction retourne :
+    // 1 si un caractère est présent
+    // 0 si pas de caractère présent
+    
+    int unCaractere = 0;
+    struct termios oldt, newt;
+    int ch;
+    int oldf;
+
+    // Mettre le terminal en mode non bloquant
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+
+    ch = getchar();
+
+    // Restaurer le mode du terminal
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    fcntl(STDIN_FILENO, F_SETFL, oldf);
+
+    if (ch != EOF) {
+        ungetc(ch, stdin);
+        unCaractere = 1;
+    }
+    return unCaractere;
+}
+
+// Fonction qui va dessiner le plateau de jeu
+void dessinerPlateau(tab plateau){
+    system("clear");
+    for (int mult=0;mult <= T_TABX-1; mult ++){
+        for (int mult2=1;mult2 <= T_TABY-1; mult2 ++){
+            if (plateau[mult][mult2]=='#'){
+                afficher(mult,mult2,'#');
+            }
+        }
+    }
+}
+
+// Fonction pour innitialiser le plateau de jeu
+void initPlateau(tab plateau, int X_pave[],int Y_pave[], int lesX[], int lesY[]){
+    for (int mult=0; mult<=NB_PAVE-1; mult ++){
+        X_pave[mult]=rand()%T_TABX-7; //T_TABX-7 = taile du tableau en x moins la bordure et moins la taille du carré de PAVE_Y par PAVE_X
+        Y_pave[mult]=rand()%T_TABY-7;
+        while (X_pave[mult]<3){
+            X_pave[mult]=rand()%T_TABX-7;
+        }
+        while (Y_pave[mult]<3){
+            Y_pave[mult]=rand()%T_TABY-7;
+        }
+        while ((X_pave[mult]<=lesX[0] &&  X_pave[mult]+PAVE_X>=lesX[TAILLE-1]) && (Y_pave[mult]<=lesY[0] && Y_pave[mult]+PAVE_Y>=lesY[TAILLE-1])){
+            X_pave[mult]=rand()%T_TABX-7;
+            Y_pave[mult]=rand()%T_TABY-7;
+            while (X_pave[mult]<3){
+            X_pave[mult]=rand()%T_TABX-7;
+            }
+            while (Y_pave[mult]<3){
+                Y_pave[mult]=rand()%T_TABY-7;
+            }
+        }
+    }    
+    for (int mult=0;mult <= T_TABX-1; mult ++){
+        for (int mult2=1;mult2 <= T_TABY-1; mult2 ++){
+            plateau[mult][mult2]='m';
+        }
+    }
+    for (int mult=0;mult <= T_TABX-1; mult ++){// Définition des cordonnés des lignes du dessus et dessous du plateau
+        plateau[mult][1]='#';
+        plateau[mult][T_TABY-1]='#';
+    }
+    for (int mult=0; mult<=T_TABY-1; mult ++){
+        plateau[1][mult]='#';
+        plateau[T_TABX-1][mult]='#';
+    }
+    for (int num_pave=0; num_pave<=NB_PAVE-1; num_pave ++){
+        for (int mult2=0; mult2<=PAVE_X-1; mult2 ++){
+            for (int mult3=0; mult3<=PAVE_Y-1; mult3 ++){
+                plateau[X_pave[num_pave]+mult2][Y_pave[num_pave]+mult3]='#';
+            }
+        }
+    }    
+    plateau[(T_TABX-1)/2][1]='z';
+    plateau[(T_TABX-1)/2][T_TABY-1]='s';
+    plateau[1][(T_TABY-1)/2]='q';
+    plateau[T_TABX-1][(T_TABY-1)/2]='d';           
+}
+
+int main() {
+    int lesX[TAILLE], lesY[TAILLE]; // Tableaux pour les positions du serpent
+    tab plateau; // Plateau de jeu
+    char direction = D_SERPENT; // Direction initiale du serpent
+    bool collision = false;; // Indicateur de collision
+    int X_pave[NB_PAVE],Y_pave[NB_PAVE]; // Positions des pavés
+    srand(time(NULL)); // Initialise le nombre aléatoire de rand() en fonction du temps
+    // Génération des positions aléatoires pour les pavés
+    for (int mult=0; mult<=3; mult ++){
+        X_pave[mult]=rand()%T_TABX-7; //taile du tableau en x moins la bordure et moins la taille du carré de 5 par 5
+        Y_pave[mult]=rand()%T_TABY-7;
+        while (X_pave[mult]<3){
+            X_pave[mult]=rand()%73;
+        }
+        while (Y_pave[mult]<3){
+            Y_pave[mult]=rand()%33;
+        }
+        usleep(rand()%2);// Pour plus d'aléatoire
+    }
+    // Initialisation du serpent
+    lesX[0] = INITIALISATIONX;
+    lesY[0] = INITIALISATIONY;
+    disableEcho();
+    if (D_SERPENT==DROITE){
+        for (int mult = 1; mult <= TAILLE; mult = mult + 1) {
+            lesX[mult] = lesX[mult - 1] - 1;
+            lesY[mult] = lesY[mult - 1];
+        }
+    }
+    if (D_SERPENT==GAUCHE){
+        for (int mult = 1; mult <= TAILLE; mult = mult + 1) {
+            lesX[mult] = lesX[mult - 1] + 1;
+            lesY[mult] = lesY[mult - 1];
+        }
+    }
+    if (D_SERPENT==HAUT){
+        for (int mult = 1; mult <= TAILLE; mult = mult + 1) {
+            lesX[mult] = lesX[mult - 1];
+            lesY[mult] = lesY[mult - 1] + 1;
+        }
+    }
+    if (D_SERPENT==BAS){
+        for (int mult = 1; mult <= TAILLE; mult = mult + 1) {
+            lesX[mult] = lesX[mult - 1];
+            lesY[mult] = lesY[mult - 1] - 1;
+        }
+    }
+    initPlateau(plateau, X_pave, Y_pave, lesX, lesY);
+    dessinerPlateau(plateau);
+    while (1) { // Boucle infinie
+        dessinerSerpent(lesX, lesY);
+        if (kbhit()) {
+            char ch = getchar();
+            if (ch == ARRET) {
+                enableEcho();
+                system("clear");
+                break; // Sortir de la boucle si la touche 'a' est pressée
+            }
+            if (ch == GAUCHE) { // mettre la direction à gauche si le serpent ne va pas à droite
+                if (direction!= DROITE){
+                    direction= GAUCHE;
+                }
+            }
+            if (ch == DROITE) { // mettre la direction à droite si le serpent ne va pas à gauche
+                if (direction!= GAUCHE){
+                    direction= DROITE;
+                }
+            }
+            if (ch == HAUT) { // mettre la direction vers le haut si le serpent ne va pas vers le bas
+                if (direction!= BAS){
+                    direction= HAUT;
+                }
+            }
+            if (ch == BAS) { // mettre la direction vers le bas si le serpent ne va pas vers le haut
+                if (direction!= HAUT){
+                    direction= BAS;
+                }
+            }
+        }
+        usleep(TEMPORALISATION); // Pause de 0.5 secondes
+        progresser(lesX, lesY, direction, &collision);
+        for (int mult=0; mult<=T_TABX-1; mult ++){
+            for (int mult=0; mult<=T_TABY-1;mult ++){
+                if (plateau[lesX[0]][lesY[0]]=='#'){
+                    collision=true;
+                }
+            }
+        }
+        if (plateau[lesX[0]][lesY[0]]=='z'){
+            lesY[0]+=T_TABY-3;
+        }
+        if (plateau[lesX[0]][lesY[0]]=='s'){
+            lesY[0]-=T_TABY-3;
+        }
+        if (plateau[lesX[0]][lesY[0]]=='d'){
+            lesX[0]-=T_TABX-3;
+        }
+        if (plateau[lesX[0]][lesY[0]]=='q'){
+            lesX[0]+=T_TABX-3;
+        }
+        if (collision==true){
+            enableEcho();
+            system("clear");
+            break;
+        }
+    }
+}
